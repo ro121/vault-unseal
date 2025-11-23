@@ -1,13 +1,7 @@
 locals {
-  # Service name is same as your app name in eks_deployment
-  vault_service_name = local.name
-
-  # Internal K8s DNS for Vault service
-  vault_addr = "http://${local.vault_service_name}.${local.namespace}.svc.cluster.local:8200"
+  # Service name and namespace are already defined in your locals
+  vault_addr         = "http://vault.${var.domain_name}"
 }
-
-
-####################################
 
 resource "kubernetes_job" "vault_init" {
   metadata {
@@ -29,13 +23,13 @@ resource "kubernetes_job" "vault_init" {
       }
 
       spec {
-        # Use the same ServiceAccount as Vault (created by eks_deployment)
+        # Use the same ServiceAccount as Vault
         service_account_name = local.name
+        restart_policy       = "OnFailure"
 
         container {
           name  = "vault-init"
-          # reuse the same image you pass into eks_deployment
-          image = local.image
+          image = local.image   # same image you use in eks_deployment
 
           env {
             name  = "VAULT_ADDR"
@@ -46,10 +40,22 @@ resource "kubernetes_job" "vault_init" {
           args = [<<-EOC
             set -e
 
-            echo "=== Vault status BEFORE init ==="
+            echo "Waiting for Vault endpoint at ${VAULT_ADDR} to be reachable..."
+
+            # Wait up to ~5 minutes for Vault to start listening
+            for i in $(seq 1 30); do
+              if vault status >/dev/null 2>&1; then
+                echo "Vault endpoint is responding."
+                break
+              fi
+              echo "Vault not ready yet (attempt $i/30), sleeping 10s..."
+              sleep 10
+            done
+
+            echo "=== Vault status BEFORE init (may show uninitialized/sealed) ==="
             vault status || true
 
-            # Idempotent: if Vault is already initialized, do nothing
+            # If already initialized, nothing to do (idempotent)
             if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
               echo "Vault already initialized; nothing to do."
               exit 0
@@ -68,21 +74,15 @@ resource "kubernetes_job" "vault_init" {
           EOC
           ]
         }
-
-        restart_policy = "OnFailure"
       }
     }
   }
+
+  # Ensure Vault Deployment/Service/SA exist before this job runs
+  depends_on = [module.eks_deployment]
 }
-
-
 
 data "http" "vault_health" {
   # if you’re fronting Vault with TLS, switch to https
   url = "http://vault.${var.domain_name}/v1/sys/health"
-}
-
-output "vault_health" {
-  description = "Raw sys/health JSON from Vault (initialized/sealed/etc.)"
-  value       = data.http.vault_health.body
 }

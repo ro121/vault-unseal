@@ -3,8 +3,8 @@
 ########################
 
 locals {
+  cluster_name      = var.cluster_name
 
-  # OIDC URL without https:// (e.g. oidc.eks.<region>.amazonaws.com/id/XYZ)
   oidc_url_hostpath = replace(
     data.aws_eks_cluster.this.identity[0].oidc[0].issuer,
     "https://",

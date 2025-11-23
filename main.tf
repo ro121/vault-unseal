@@ -103,6 +103,10 @@ data "aws_iam_role" "vault_irsa" {
   name = "vault-irsa-kms-${var.cluster_name}"
 }
 
+data "aws_kms_alias" "vault_unseal" {
+  name = "alias/vault-unseal"
+}
+
 
 ########################
 # 4) Call existing eks_deployment module to deploy Vault

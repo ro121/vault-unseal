@@ -1,18 +1,4 @@
 ########################
-# Locals mirrored from your current Vault deployment
-########################
-
-locals {
-  cluster_name      = var.cluster_name
-
-  oidc_url_hostpath = replace(
-    data.aws_eks_cluster.this.identity[0].oidc[0].issuer,
-    "https://",
-    ""
-  )
-}
-
-########################
 # 1) KMS key for Vault auto-unseal
 ########################
 
@@ -26,62 +12,7 @@ resource "aws_kms_alias" "vault_unseal" {
   name          = "alias/vault-unseal"
   target_key_id = aws_kms_key.vault_unseal.key_id
 }
-
-########################
-# 2) IAM policy + IRSA role for Vault
-########################
-
-resource "aws_iam_policy" "vault_kms" {
-  name        = "vault-kms-${local.cluster_name}"
-  description = "Allow Vault to use the KMS key for auto-unseal"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "kms:Encrypt",
-          "kms:Decrypt",
-          "kms:DescribeKey",
-        ]
-        Resource = aws_kms_key.vault_unseal.arn
-      }
-    ]
-  })
-}
-
-data "aws_iam_policy_document" "vault_irsa_trust" {
-  statement {
-    effect = "Allow"
-
-    principals {
-      type        = "Federated"
-      identifiers = [data.aws_iam_openid_connect_provider.eks.arn]
-    }
-
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    condition {
-      test     = "StringEquals"
-      # system:serviceaccount:<namespace>:<serviceaccount>
-      variable = "${local.oidc_url_hostpath}:sub"
-      values   = ["system:serviceaccount:${var.namespace}:${var.vault_name}"]
-    }
-  }
-}
-
-resource "aws_iam_role" "vault_irsa" {
-  name               = "vault-irsa-kms-${local.cluster_name}"
-  assume_role_policy = data.aws_iam_policy_document.vault_irsa_trust.json
-}
-
-resource "aws_iam_role_policy_attachment" "vault_kms_attach" {
-  role       = aws_iam_role.vault_irsa.name
-  policy_arn = aws_iam_policy.vault_kms.arn
-}
-
-#######################
+###############
 # Build VAULT_LOCAL_CONFIG using KMS outputs
 #######################
 

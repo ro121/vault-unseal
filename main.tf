@@ -99,6 +99,10 @@ locals {
   }
 }
 
+data "aws_iam_role" "vault_irsa" {
+  name = "vault-irsa-kms-${var.cluster_name}"
+}
+
 
 ########################
 # 4) Call existing eks_deployment module to deploy Vault

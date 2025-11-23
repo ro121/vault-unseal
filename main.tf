@@ -81,43 +81,24 @@ resource "aws_iam_role_policy_attachment" "vault_kms_attach" {
   policy_arn = aws_iam_policy.vault_kms.arn
 }
 
-########################
-# 3) Vault config (VAULT_LOCAL_CONFIG) with awskms seal
-########################
+#######################
+# Build VAULT_LOCAL_CONFIG using KMS outputs
+#######################
 
 locals {
   vault_local_config = jsonencode({
-    listener = [
-      {
-        tcp = {
-          address     = "0.0.0.0:8200"
-          tls_disable = 1
-        }
-      }
-    ]
-
-    # storage – matches PVC mount_path (/vault/data)
-    storage = {
-      raft = {
-        path    = "/vault/data"
-        node_id = "vault-0"
-      }
-    }
-
     seal = {
       awskms = {
         region     = var.aws_region
-        kms_key_id = aws_kms_key.vault_unseal.arn
+        kms_key_id = data.aws_kms_alias.vault_unseal.target_key_arn
       }
     }
-
-    ui = true
   })
-
   vault_secret_data = {
     VAULT_LOCAL_CONFIG = local.vault_local_config
   }
 }
+
 
 ########################
 # 4) Call existing eks_deployment module to deploy Vault
@@ -144,9 +125,6 @@ module "vault" {
   probes                    = local.probes
 
   # NEW: env + IRSA for KMS auto-unseal
-  secret_data = local.vault_secret_data
-
-  service_account_annotations = {
-    "eks.amazonaws.com/role-arn" = aws_iam_role.vault_irsa.arn
-  }
+  role_arn    = data.aws_iam_role.vault_irsa.arn   # from data lookup by name
+  secret_data = local.vault_secret_data            # this injects VAULT_LOCAL_CONFIG
 }

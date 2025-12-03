@@ -1,88 +1,65 @@
-locals {
-  # Service name and namespace are already defined in your locals
-  vault_addr         = "http://vault.${var.domain_name}"
-}
-
 resource "kubernetes_job" "vault_init" {
   metadata {
     name      = "vault-init"
-    namespace = local.namespace
-    labels = {
-      app = "vault-init"
-    }
+    namespace = "security-services"
   }
 
   spec {
-    backoff_limit = 1
+    backoff_limit = 0
 
     template {
       metadata {
-        labels = {
-          app = "vault-init"
-        }
+        name = "vault-init"
       }
 
       spec {
-        # Use the same ServiceAccount as Vault
-        service_account_name = local.name
-        restart_policy       = "OnFailure"
+        restart_policy       = "Never"
+        service_account_name = "vault" # <- or whatever SA your vault pods use
 
         container {
           name  = "vault-init"
-          image = local.image   # same image you use in eks_deployment
+          image = local.image  # or "hashicorp/vault:1.20.3" if you prefer
+          command = ["/bin/sh", "-c"]
 
           env {
             name  = "VAULT_ADDR"
-            value = local.vault_addr
+            value = "http://vault.${var.domain_name}"  # e.g. http://vault.squad-exploration.aws.boeing.com
           }
 
-          command = ["/bin/sh", "-c"]
-          args = [<<-EOC
-            set -e
+          args = [<<-EOT
+            set -euo pipefail
 
-            echo "Waiting for Vault endpoint at ${VAULT_ADDR} to be reachable..."
+            echo "Vault init job starting. VAULT_ADDR=${VAULT_ADDR}"
 
-            # Wait up to ~5 minutes for Vault to start listening
-            for i in $(seq 1 30); do
-              if vault status >/dev/null 2>&1; then
-                echo "Vault endpoint is responding."
-                break
-              fi
-              echo "Vault not ready yet (attempt $i/30), sleeping 10s..."
-              sleep 10
+            echo "Waiting for Vault HTTP endpoint to be reachable..."
+            # Only check connectivity, not status codes
+            until curl -s "${VAULT_ADDR}/v1/sys/health" >/dev/null 2>&1; do
+              echo "  still waiting for Vault at ${VAULT_ADDR} ..."
+              sleep 5
             done
 
-            echo "=== Vault status BEFORE init (may show uninitialized/sealed) ==="
-            vault status || true
-
-            # If already initialized, nothing to do (idempotent)
-            if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
-              echo "Vault already initialized; nothing to do."
+            echo "Checking if Vault is already initialized..."
+            if vault status 2>&1 | grep -q 'Initialized.*true'; then
+              echo "Vault already initialized. Nothing to do."
               exit 0
             fi
 
-            echo "Vault is NOT initialized; running vault operator init..."
-            vault operator init -format=json > /tmp/init.json
+            echo "Vault not initialized. Running 'vault operator init'..."
+            # defaults: 5 recovery keys, threshold 3 – good for most cases
+            vault operator init > /tmp/vault-init.txt
 
-            echo "=== vault operator init output (JSON) ==="
-            cat /tmp/init.json
+            echo "Vault initialization completed."
+            echo "================= IMPORTANT ================="
+            echo "Copy the following Recovery Keys + Root Token"
+            echo "and store them securely (e.g. password vault)."
+            echo "---------------------------------------------"
+            cat /tmp/vault-init.txt
+            echo "============================================="
 
-            echo "=== Vault status AFTER init ==="
-            vault status || true
-
-            echo "vault-init job completed successfully."
-          EOC
-          ]
+            exit 0
+          EOT]
         }
       }
     }
   }
-
-  # Ensure Vault Deployment/Service/SA exist before this job runs
-  depends_on = [module.eks_deployment]
-}
-
-data "http" "vault_health" {
-  # if you’re fronting Vault with TLS, switch to https
-  url = "http://vault.${var.domain_name}/v1/sys/health"
 }

@@ -1,0 +1,16 @@
+vault_addr  = "https://vault-dev.example.com:8200"
+vault_token = "s.dev-root-or-admin-token"
+
+# Enable KV v2 on "secret/" and (optionally) transit on "transit/"
+secret_engines = {
+  secret = {
+    type        = "kv-v2"
+    description = "Default KV v2 backend for app secrets"
+  }
+
+  # Uncomment if you also want transit:
+  # transit = {
+  #   type        = "transit"
+  #   description = "Transit engine for crypto operations"
+  # }
+}

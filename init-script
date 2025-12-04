@@ -1,0 +1,37 @@
+args = [<<-EOC
+set -euo pipefail
+
+echo "Checking Vault initialization status..."
+
+# Query Vault init state
+INIT_STATUS=$(curl -s "${VAULT_ADDR}/v1/sys/init" || echo "")
+
+echo "Init status response: ${INIT_STATUS}"
+
+# If Vault is already initialized, skip secret creation
+if echo "${INIT_STATUS}" | grep -q '"initialized":true'; then
+  echo "Vault is already initialized → Skipping log extraction + secret creation."
+  exit 0
+fi
+
+echo "Vault is NOT initialized → Extracting init logs and storing secret."
+
+# Wait for vault-init job to complete
+kubectl wait --for=condition=complete job/vault-init -n "${namespace}" --timeout=180s
+
+# Extract LAST LOG LINE (this contains root_token + recovery keys)
+LAST_LINE=$(kubectl logs job/vault-init -n "${namespace}" | tail -1)
+
+echo "Extracted init JSON:"
+echo "${LAST_LINE}"
+
+# Store inside Kubernetes Secret (create or update)
+kubectl create secret generic vault-init-output \
+  -n "${namespace}" \
+  --from-literal=output="${LAST_LINE}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+echo "Secret vault-init-output stored successfully."
+
+EOC
+]

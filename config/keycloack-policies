@@ -1,0 +1,37 @@
+resource "vault_auth_backend" "oidc" {
+  type = "oidc"
+  path = "oidc"
+}
+
+
+resource "vault_identity_oidc" "keycloak" {
+  name = "keycloak"
+  issuer = "https://keycloak-global.titan-global.aws.boeing.com/realms/vault"  # Replace with your Keycloak URL
+
+  client_id     = "vault"  # Keycloak client ID for Vault
+  client_secret = var.keycloak_client_secret  # Should be securely passed (e.g., in the pipeline)
+
+  default_role = "default"  # Default role for users without specific mapping
+  scopes       = ["openid", "profile", "email"]
+}
+
+
+resource "vault_auth_backend_role" "vault_admin" {
+  backend = vault_auth_backend.oidc.path
+  role_name = "vault-admin"
+
+  allowed_redirect_uris = [
+    "https://vault.example.com/ui/vault/auth/oidc/oidc/callback",
+    "http://localhost:8250/oidc/callback"
+  ]
+
+  user_claim = "sub"  # The claim in the token that holds the user ID (default is `sub`)
+  groups_claim = "groups"  # Claim that contains group membership
+
+  bound_claims = {
+    groups = "vault-admins"  # Only users in this group will get `superuser` access
+  }
+
+  token_policies = ["superuser"]
+  token_ttl      = "1h"
+}

@@ -123,3 +123,8 @@ Vault sees the group name in the JWT, matches it via the Group Alias, and automa
 ### Next Steps for the Board
 
 Would you like me to **draft the specific HCL (Terraform code)** for the `vault_identity_group` and `vault_jwt_auth_backend_role` resources to demonstrate the Keycloak mapping?
+
+
+
+
+The official HashiCorp Vault provider for Terraform requires an active API and an authentication token to operate. This creates a "catch-22" during the first deployment: Terraform cannot initialize Vault because there is no provider for initialization

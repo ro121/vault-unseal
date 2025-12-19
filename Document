@@ -75,6 +75,49 @@ The core of our security model is the automated mapping of Keycloak attributes t
 * **Audit Logging:** All interactions (including the automated initialization job) are logged to the EKS FluentBit/CloudWatch pipeline.
 * **Isolation:** Vault and Keycloak reside in dedicated K8s Namespaces with Network Policies preventing unauthorized cross-pod communication.
 
+
+2. Phase I: The Bootstrapping Logic (operator.tf)
+Since standard Terraform providers cannot interact with an uninitialized Vault API, we have implemented a custom orchestration pattern to automate the "Day 0" setup.
+
+2.1 The Kubernetes Initialization Job
+We use a Terraform kubernetes_job resource (defined in operator.tf) to handle the initialization process.
+
+Execution Workflow:
+
+Orchestration: Once the Vault statefulset is deployed, Terraform triggers a K8s Job. This job runs a custom script designed to monitor the Vault pods until they are in a "Ready" state.
+
+Vault Initialization: The script executes vault operator init -format=json.
+
+This process generates 5 Unseal Key Shares and 1 Initial Root Token.
+
+Vault transitions from an "uninitialized" state to a "sealed" state.
+
+Credential Capture & Secure Storage: * The script acts as a Log Extractor: it captures the JSON output of the initialization command.
+
+Instead of outputting these secrets to the job logs (which would be insecure), the script programmatically creates a Kubernetes Secret within the cluster.
+
+This secret contains the unseal keys and the root token, allowing for subsequent automated unseal operations or administrative configuration.
+
+3. Phase II: Identity Federation (Keycloak & SSO)
+Once initialized, Vault is configured to delegate authentication to Keycloak (also hosted on EKS) using the OpenID Connect (OIDC) protocol.
+
+3.1 OIDC Configuration
+Terraform configures the Vault OIDC auth method to trust our Keycloak realm. This setup includes defining a JWT role that maps the groups claim from the Keycloak token to Vault's internal identity system.
+
+3.2 External Group Mapping Logic
+Our security model relies on External Groups to ensure that permissions are managed dynamically without manual intervention in Vault.
+
+Source of Truth (Keycloak): All user groups (e.g., Dev-Ops, Security-Audit) are created and managed directly within Keycloak.
+
+The Vault Link (Terraform): 1. External Identity Group: Terraform creates a vault_identity_group in Vault and sets its type to external. 2. Group Alias: Terraform then creates a vault_identity_group_alias. This alias acts as the "bridge." It matches the specific Group Name existing in Keycloak to the External Group ID in Vault. 3. Policy Inheritance: We attach specific Vault HCL policies to the External Group.
+
+The Authentication Flow:
+
+A user logs into Vault via the OIDC/Keycloak method.
+
+Keycloak provides a JWT containing the user's group memberships.
+
+Vault sees the group name in the JWT, matches it via the Group Alias, and automatically assigns the user the corresponding Vault Policies.
 ---
 
 ### Next Steps for the Board

@@ -1,0 +1,82 @@
+This documentation is prepared for the **Scenario Board Review**. It outlines the architectural design, deployment automation, and identity governance for the HashiCorp Vault implementation on Amazon EKS.
+
+---
+
+# Design Document: Automated Vault Deployment & Identity Federation
+
+## 1. Executive Summary
+
+This project implements a highly available, self-bootstrapping **HashiCorp Vault** instance hosted on **Amazon EKS**. The solution solves the "initialization gap" in standard Terraform providers by using a custom Kubernetes-native operator pattern and integrates **Keycloak SSO** for automated, group-based access control.
+
+---
+
+## 2. Infrastructure & Environment
+
+* **Orchestration:** Amazon Elastic Kubernetes Service (EKS).
+* **Image Management:** All container images (Vault, Keycloak, and custom init-scripts) are stored in a **Private Container Registry** to ensure supply chain security.
+* **Configuration Management:** Terraform is used for both infrastructure provisioning (EKS resources) and post-initialization Vault configuration.
+
+---
+
+## 3. Automated Bootstrapping (The "Operator" Pattern)
+
+Standard Terraform providers cannot perform the initial `vault operator init` because the Vault API is unreachable until the cluster is initialized.
+
+### 3.1 The `operator.tf` Workflow
+
+To automate the lifecycle, we have implemented a custom orchestration layer:
+
+1. **Kubernetes Job:** Terraform deploys a K8s Job (defined in `operator.tf`) that monitors the Vault pods.
+2. **Initialization Script:** Once Vault is "Ready," the job executes a script inside the cluster to run `vault operator init -format=json`.
+3. **The Initialization Process:**
+* Generates **5 Unseal Key Shares** and **1 Initial Root Token**.
+* Configures the storage backend (Consul, Raft, or S3) to transition from `uninitialized` to `sealed`.
+
+
+4. **Secure Log Extraction:** * A sidecar or post-processing logic extracts the JSON output from the job logs.
+* **K8s Secret Storage:** The script automatically encodes and stores the Unseal Keys and Root Token into a **Kubernetes Secret** (e.g., `vault-unseal-keys`).
+* *Security Note: Access to this specific K8s secret is restricted via strict RBAC to cluster administrators only.*
+
+
+
+---
+
+## 4. Identity & Access Governance (SSO)
+
+Access to Vault is not managed via local users. Instead, we use **Identity Federation** via Keycloak (also hosted on EKS).
+
+### 4.1 Keycloak Integration (OIDC)
+
+We have configured an OpenID Connect (OIDC) mount in Vault that points to the Keycloak Realm. This removes the need for static credentials and leverages existing corporate identities.
+
+### 4.2 Group-Based Policy Mapping
+
+The core of our security model is the automated mapping of Keycloak attributes to Vault permissions:
+
+1. **Keycloak Groups:** Users are assigned to specific groups in Keycloak (e.g., `App-Dev-Team-Alpha`, `Security-Admins`).
+2. **JWT Claims:** When a user logs in, Keycloak issues a JWT containing a `groups` claim.
+3. **Vault Group Aliases:** Terraform creates **External Groups** in Vault. Each external group is linked to a **Group Alias** that matches the name of the Keycloak group.
+4. **Policy Inheritance:** * Vault policies (defining path-level CRUD permissions) are attached to these Vault Groups.
+* **The Result:** A user in the `App-Dev` group in Keycloak automatically inherits the "Developer" policy in Vault upon login.
+
+
+
+| Component | Entity | Responsibility |
+| --- | --- | --- |
+| **Identity Provider** | Keycloak Group | Defines user membership and organizational role. |
+| **Intermediary** | Vault Group Alias | Maps the Keycloak "Group Name" to a Vault "Identity." |
+| **Authorizer** | Vault Policy | Defines exactly which secrets (paths) the group can access. |
+
+---
+
+## 5. Security Posture & Compliance
+
+* **Encryption at Rest:** All secrets stored in Vault are encrypted using AES-GCM-256.
+* **Audit Logging:** All interactions (including the automated initialization job) are logged to the EKS FluentBit/CloudWatch pipeline.
+* **Isolation:** Vault and Keycloak reside in dedicated K8s Namespaces with Network Policies preventing unauthorized cross-pod communication.
+
+---
+
+### Next Steps for the Board
+
+Would you like me to **draft the specific HCL (Terraform code)** for the `vault_identity_group` and `vault_jwt_auth_backend_role` resources to demonstrate the Keycloak mapping?

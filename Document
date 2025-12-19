@@ -128,3 +128,29 @@ Would you like me to **draft the specific HCL (Terraform code)** for the `vault_
 
 
 The official HashiCorp Vault provider for Terraform requires an active API and an authentication token to operate. This creates a "catch-22" during the first deployment: Terraform cannot initialize Vault because there is no provider for initialization
+
+
+
+
+3.1 The operator.tf Workflow
+To bypass this limitation, we utilize an operator.tf configuration that schedules a Kubernetes Job to handle the bootstrapping phase.
+
+The Workflow Logic:
+
+Job Trigger: Terraform schedules the Job once the Vault pods are healthy.
+
+Initialization Script: The Job executes a shell script that performs vault operator init -format=json.
+
+Process Details:
+
+Generates the 5 Unseal Keys and the Root Token.
+
+Converts the Vault state from Uninitialized to Sealed.
+
+Log Extraction & Secret Storage:
+
+The script captures the JSON output but does not print it to standard logs to avoid sensitive data leaks in CloudWatch.
+
+It programmatically extracts the credentials and injects them into a Kubernetes Secret (e.g., vault-unseal-keys).
+
+RBAC Control: Access to this secret is restricted via K8s RBAC to only authorized cluster admins.
